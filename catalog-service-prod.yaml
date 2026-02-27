@@ -1,5 +1,14 @@
-polar:
-  greeting: "WELCOM MESSAGE FROM GITHUB CONFIG-REPO: FOR dev ENV"
 spring:
   application:
     name: catalog-service
+polar:
+  greeting: "WELCOM MESSAGE FROM GITHUB CONFIG-REPO: FOR dev ENV"
+---
+spring:
+  application:
+    name: catalog-service
+  config:
+    activate:
+      on-profile: prod
+polar:
+  greeting: "WELCOM MESSAGE FROM GITHUB CONFIG-REPO: FOR PRODUCTION ENV"
