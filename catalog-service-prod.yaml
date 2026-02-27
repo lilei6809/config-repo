@@ -3,5 +3,3 @@ polar:
 spring:
   application:
     name: catalog-service
-  profiles:
-    active: prod
