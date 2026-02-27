@@ -1,2 +1,8 @@
 polar:
   greeting: "WELCOME MESSAGE FROM GITHUB CONFIG-REPO"
+------------------------
+polar:
+  greeting: "WELCOM MESSAGE FROM GITHUB CONFIG-REPO: FOR PRODUCTION ENV"
+spring:
+  profiles:
+    active: prod
