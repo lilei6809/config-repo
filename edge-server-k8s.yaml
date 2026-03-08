@@ -5,7 +5,8 @@ server:
     connection-timeout: 2s
     idle-timeout: 10s # 当 TCP connection 建立后 10s 内无数据, 则关闭
 
-
+polar:
+  greeting: "WELCOM MESSAGE FROM GITHUB CONFIG-REPO: FOR dev ENV"
 
 spring:
   application:
@@ -110,6 +111,7 @@ management:
 logging:
   level:
     io.github.resilience4j: DEBUG
+
 
 
 
