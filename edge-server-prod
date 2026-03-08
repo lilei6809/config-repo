@@ -1,0 +1,48 @@
+# ============================================================
+# edge-server-prod.yml — 生产环境覆盖配置
+# 定位: 正式生产集群, 全面加固, 最小权限原则
+# ============================================================
+
+polar:
+  greeting: "greeting from prod config FROM GITHUB"
+
+spring:
+  cloud:
+    config:
+      # 生产环境强制: Config Server 不可达则拒绝启动
+      # 防止服务以错误/空配置上线造成故障
+      fail-fast: true
+
+    gateway:
+      server:
+        webflux:
+          httpclient:
+            pool:
+              # fixed: 限制最大连接数, 防止流量突增时打爆下游服务
+              # 根据下游服务实际容量评估此值, 不能随意填大
+              type: fixed
+              max-connections: 100
+
+  data:
+    redis:
+      # 生产 Redis 地址通过 K8s Secret + 环境变量注入
+      # 密码等敏感信息绝对不出现在 Git 仓库中
+      host: ${REDIS_HOST}   # 生产环境不提供 fallback 默认值, 未注入就启动失败
+
+logging:
+  level:
+    io.github.resilience4j: WARN
+    org.springframework.cloud.gateway: WARN
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # 生产环境收窄: 去掉 refresh (生产不允许运行时热刷新配置)
+        # 只保留 health 供 K8s 探针和监控系统使用
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true      # liveness / readiness 探针
+      show-details: never  # 生产环境不对外暴露健康详情, 防止信息泄露
