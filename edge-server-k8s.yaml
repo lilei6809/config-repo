@@ -1,119 +1,49 @@
-server:
-  shutdown: graceful
-  port: 9000
-  netty:
-    connection-timeout: 2s
-    idle-timeout: 10s # 当 TCP connection 建立后 10s 内无数据, 则关闭
 
 polar:
-  greeting: "WELCOM MESSAGE FROM GITHUB CONFIG-REPO: FOR dev ENV"
+  greeting: "edge server k8s config from GITHUB"
+
+# ============================================================
+# edge-server-k8s.yml — Dev K8s 集群环境覆盖配置
+# 定位: 部署到开发集群, 依赖通过 K8s Service DNS 访问
+# 保持 debug 友好, 不做生产加固
+# ============================================================
 
 spring:
-  application:
-    name: edge-server
-  lifecycle:
-    timeout-per-shutdown-phase: 15s
+  cloud:
+    config:
+      # Dev K8s 集群里 Config Server 通常是稳定的, 但仍允许失败
+      # 开发阶段不希望 Config Server 一挂就阻断所有服务启动
+      fail-fast: false
+
     gateway:
       server:
         webflux:
-          routes:
-            - id: catalog-service
-              uri: ${CATALOG_SERVICE_URL:http://localhost:9001}/books
-              predicates:
-                - Path=/books/**
-              filters:
-                - name: CircuitBreaker
-                  args:
-                    name: catalogCircuitBreaker
-                    fallbackUri: forward:/catalog-fallback
-            - id: order-service
-              uri:
-                ${ORDER_SERVICE_URL:http://localhost:9002}/orders
-              predicates:
-                - Path=/orders/**
-              filters:
-                - name: CircuitBreaker
-                  args:
-                    name: orderCircuitBreaker
           httpclient:
-            connect-timeout: 2000
-            response-timeout: 2000
             pool:
+              # Dev 集群流量小, elastic 足够, 方便调试
               type: elastic
-              max-idle-time: 15s
-              max-life-time: 60s # 连接，最长只复用 60 秒。到了这个时间，即使连接还没坏、也不是空闲状态，连接池也会把它淘汰，后面再建新连接。
-          default-filters: # 应用到全局的 filter
-            - name: Retry
-              args:
-                retries: 3
-                methods: GET
-                series: SERVER_ERROR
-                exceptions:
-                  - java.io.IOException
-                  - java.util.concurrent.TimeoutException
-                backoff:
-                  firstBackOff: 50ms
-                  maxBackOff: 500ms
-                  factor: 2
-                  basedOnPreviousValue: false
-                jitter:
-                  randomFactor: 0.5
-
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter:
-                  requestedTokens: 1
-                  burstCapacity: 20
-                  replenishRate: 10
-
-            - name: SaveSession
-  session:
-    # Specifies the type of session store (e.g., "redis", "jdbc", "mongodb", "hazelcast")
-    store-type: redis
-    # The timeout for the session in seconds (default is 1800 seconds, or 30 minutes)
-    timeout: 10m
-    redis:
-      namespace: polar:edge
-
-
-
 
   data:
     redis:
-      connect-timeout: 1s
-      host: polar-redis
-      port: 6379
-      timeout: 1s  # response timeout
+      # 通过 K8s Service DNS 访问集群内的 Redis
+      host: ${DATA_REDIS_HOST:ploar-redis}
 
-  profile:
-    active: k8s
-
-resilience4j:
-  circuitbreaker:
-    configs:
-      default:
-        sliding-window-size: 20
-        permitted-number-of-calls-in-half-open-state: 5
-        failure-rate-threshold: 50
-        wait-duration-in-open-state:
-          seconds: 15
-  timelimiter:
-    configs:
-      default:
-        timeout-duration:
-          seconds: 3
+logging:
+  level:
+    io.github.resilience4j: DEBUG
+    org.springframework.cloud.gateway: DEBUG
 
 management:
   endpoints:
     web:
       exposure:
+        # Dev 集群保留 refresh, 方便触发配置热更新
         include: refresh,health
-logging:
-  level:
-    io.github.resilience4j: DEBUG
-
-
-
+  endpoint:
+    health:
+      probes:
+        enabled: true       # 开启 liveness / readiness, K8s 探针需要
+      show-details: always  # Dev 环境可以看健康详情, 方便排查
 
 
 
