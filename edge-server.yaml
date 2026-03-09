@@ -18,22 +18,7 @@ spring:
 
   lifecycle:
     timeout-per-shutdown-phase: 15s
-
-  config:
-    import: "optional:configserver:"
-
   cloud:
-    config:
-      uri: ${CONFIG_SERVER_URI:http://localhost:8888}
-      request-connect-timeout: 5000 # 5s
-      request-read-timeout: 5000    # 5s
-      # fail-fast 由各 profile 覆盖: dev=false, k8s=true
-      retry:
-        max-attempts: 6
-        initial-interval: 1000
-        max-interval: 2000
-        multiplier: 1.1
-
     gateway:
       server:
         webflux:
