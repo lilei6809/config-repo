@@ -1,57 +1,86 @@
-# ============================================================
-# edge-server.yml — 所有 profile 共用的基础配置
-# 存放于 Git Config Repo 根目录
-# ============================================================
-
 server:
   shutdown: graceful
   port: 9000
   netty:
-    connection-timeout: 2s
-    idle-timeout: 10s
-polar:
-  greeting: "edge-server general config from GITHUB"
+    connection-timeout: 2s #  TCP 握手阶段超时
+    idle-timeout: 10s # 当 TCP connection 建立后 10s 内无数据, 则关闭
 
+polar:
+  greeting: "greeting from local config"
+  gateway:
+    rate-limiter:  # redis rate limiter 使用的配置
+      local-fallback-enabled: true  # 启动本地 limiter 降级
+      entry-ttl: 10m
+      cleanup-interval: 1m
+      redis-timeout: 250ms   # 连接 redis 的超时时间
+      mode-header-name: X-RateLimit-Mode  # X-RateLimit-Mode:redis
 spring:
   application:
     name: edge-server
-
   lifecycle:
     timeout-per-shutdown-phase: 15s
+  config:
+    # 注意: github 上的配置不能带 config 部分, 下面的 cloud.config 也是. 因为配置加载到这儿, springboot 就知道要去找 config-service 要配置
+    # 但是如果 github 上的配置中仍然事 让去 config-service 要配置, 就无限递归了
+    import: "optional:configserver:"
   cloud:
+    config:
+      uri: ${CONFIG_SERVER_URI:http://localhost:8888}
+      request-connect-timeout: 5000 # 5s
+      request-read-timeout: 5000 # 5s
+      fail-fast: false # In production, set to true
+      retry:
+        max-attempts: 6
+        initial-interval: 1000 # 1s
+        max-interval: 2000 # 2s
+        multiplier: 1.1
+        useRandomPolicy: true # 配置为 true, 重试时增加随机 jitter, 防止发生惊群效应
     gateway:
       server:
         webflux:
           routes:
             - id: catalog-service
-              # URI 由环境变量注入; 本地 fallback 仅供 dev 使用
               uri: ${CATALOG_SERVICE_URL:http://localhost:9001}/books
               predicates:
                 - Path=/books/**
               filters:
-                - name: CircuitBreaker
+                - name: CircuitBreaker  #  Spring Cloud Gateway 在启动时会从容器里找名为 CircuitBreaker 的 GatewayFilterFactory
                   args:
-                    name: catalogCircuitBreaker
-                    fallbackUri: forward:/catalog-fallback
-
+                    name: catalogCircuitBreaker # 熔断器实例的名字
+                    fallbackUri: forward:/catalog-fallback # 触发熔断后, 回调转发到 /catalog-fallback
+                - name: RequestRateLimiter
+                  args:
+                    key-resolver: "#{@userKeyResolver}"
+                    redis-rate-limiter.requestedTokens: 1
+                    redis-rate-limiter.burstCapacity: 20
+                    redis-rate-limiter.replenishRate: 10
             - id: order-service
-              uri: ${ORDER_SERVICE_URL:http://localhost:9002}/orders
+              uri:
+                ${ORDER_SERVICE_URL:http://localhost:9002}/orders
               predicates:
                 - Path=/orders/**
               filters:
                 - name: CircuitBreaker
                   args:
                     name: orderCircuitBreaker
+                # 因为 order 需要远程调用, 还需要查 database, 所以 rate limit 保守一些
+                - name: RequestRateLimiter
+                  args:
+                    key-resolver: "#{@userKeyResolver}"
+                    redis-rate-limiter.requestedTokens: 1
+                    redis-rate-limiter.burstCapacity: 5
+                    redis-rate-limiter.replenishRate: 2
 
-          httpclient:
+          httpclient: # 全局连接配置: 与 upstream 的连接
             connect-timeout: 2000
             response-timeout: 2000
             pool:
-              # type / max-connections 由各 profile 覆盖
-              max-idle-time: 15s
-              max-life-time: 60s
-
-          default-filters:
+              type: elastic
+              max-idle-time: 15s # 一个连接放回池子之后，如果**超过 15 秒没人用它**，就把它销毁。目的是避免持有大量空闲连接占用资源，同时也防止拿到一个已经被服务端悄悄关掉的"死连接"。
+              max-life-time: 60s # 连接，最长只复用 60 秒。到了这个时间，即使连接还没坏、也不是空闲状态，连接池也会把它淘汰，后面再建新连接。
+                                # 有一个经典问题叫 **"连接被服务端单方面关闭"**：下游服务因为重启、超时策略、负载均衡切换等原因悄悄关掉了连接，但网关的连接池不知道，还以为连接是好的，把它借出去发请求就会直接报错。
+                                # `max-life-time` 通过定期强制换新连接来规避这个问题。
+          default-filters: # 应用到全局的 filter
             - name: Retry
               args:
                 retries: 3
@@ -68,27 +97,25 @@ spring:
                 jitter:
                   randomFactor: 0.5
 
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter:
-                  requestedTokens: 1
-                  burstCapacity: 20
-                  replenishRate: 10
+
 
             - name: SaveSession
-
   session:
+    # Specifies the type of session store (e.g., "redis", "jdbc", "mongodb", "hazelcast")
     store-type: redis
+    # The timeout for the session in seconds (default is 1800 seconds, or 30 minutes)
     timeout: 10m
     redis:
       namespace: polar:edge
 
+
+
   data:
     redis:
       connect-timeout: 1s
-      # host 由各 profile 覆盖
+      host: ${DATA_REDIS_HOST:localhost}
       port: 6379
-      timeout: 1s
+      timeout: 1s  # response timeout
 
 resilience4j:
   circuitbreaker:
@@ -109,4 +136,23 @@ management:
   endpoints:
     web:
       exposure:
-        include: refresh,health
+        include: refresh, health, info, prometheus, metrics
+  metrics:
+    tags:
+      application: ${spring.application.name}  # 重要！给所有指标打上服务名标签
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true   # 开启延迟分布直方图
+      percentiles:
+        http.server.requests: 0.5, 0.95, 0.99  # P50 / P95 / P99
+logging:
+  level:
+    io.github.resilience4j: DEBUG
+    org.springframework.cloud.gateway: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread][traceId: %X{trace_id}, spanId: %X{span_id}] %-5level %logger{36} - %msg%n"
+
+
+
+
+
