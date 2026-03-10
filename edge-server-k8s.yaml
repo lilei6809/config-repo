@@ -38,12 +38,13 @@ management:
     web:
       exposure:
         # Dev 集群保留 refresh, 方便触发配置热更新
-        include: refresh,health
+        include: refresh, health, info, prometheus, metrics
   endpoint:
     health:
       probes:
         enabled: true       # 开启 liveness / readiness, K8s 探针需要
       show-details: always  # Dev 环境可以看健康详情, 方便排查
+
 
 
 
